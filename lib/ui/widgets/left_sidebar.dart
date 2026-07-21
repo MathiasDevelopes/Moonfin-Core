@@ -25,6 +25,7 @@ import '../../util/overlay_color_palette.dart';
 import '../../util/platform_detection.dart';
 import '../navigation/destinations.dart';
 import '../navigation/home_refresh_bus.dart';
+import '../navigation/route_lifecycle_observer.dart';
 import 'navigation_layout.dart';
 import 'settings/settings_panel.dart';
 import '../screens/syncplay/syncplay_screen.dart';
@@ -70,7 +71,7 @@ class LeftSidebar extends StatefulWidget {
   State<LeftSidebar> createState() => _LeftSidebarState();
 }
 
-class _LeftSidebarState extends State<LeftSidebar> {
+class _LeftSidebarState extends State<LeftSidebar> with RouteAware {
   final _userRepo = GetIt.instance<UserRepository>();
   final _prefs = GetIt.instance<UserPreferences>();
   final _viewsRepo = GetIt.instance<UserViewsRepository>();
@@ -108,7 +109,7 @@ class _LeftSidebarState extends State<LeftSidebar> {
     super.initState();
     _currentTime = ValueNotifier<String>('');
     _focusNavbarCallback = () {
-      if (!mounted) return;
+      if (!mounted || _homeFocusNode.context == null) return;
       _homeFocusNode.requestFocus();
     };
     _focusAvatarCallback = () {
@@ -155,8 +156,35 @@ class _LeftSidebarState extends State<LeftSidebar> {
     }
   }
 
+  ModalRoute<dynamic>? _observedRoute;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route == null || route == _observedRoute) return;
+    if (_observedRoute != null) {
+      routeLifecycleObserver.unsubscribe(this);
+    }
+    _observedRoute = route;
+    routeLifecycleObserver.subscribe(this, route);
+  }
+
+  @override
+  void didPopNext() {
+    // Our route is current again. An out of order route teardown can leave
+    // the focus bridge pointing at a torn-down chrome instance, so re-assert
+    // that it targets this live one.
+    NavigationLayout.focusNavbarNotifier.value = _focusNavbarCallback;
+    NavigationLayout.focusNavbarAvatarNotifier.value = _focusAvatarCallback;
+  }
+
   @override
   void dispose() {
+    if (_observedRoute != null) {
+      routeLifecycleObserver.unsubscribe(this);
+      _observedRoute = null;
+    }
     if (identical(
       NavigationLayout.focusNavbarNotifier.value,
       _focusNavbarCallback,
