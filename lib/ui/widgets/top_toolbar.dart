@@ -122,6 +122,9 @@ class _TopToolbarState extends State<TopToolbar> with RouteAware {
   VoidCallback? _previousFocusNavbarCallback;
   VoidCallback? _previousFocusAvatarCallback;
   FocusNode? _previousFocus;
+  // Tracked per instance so only the toolbar that actually held focus
+  // clears the shared isFocusedNotifier on dispose.
+  bool _toolbarHadFocus = false;
   List<AggregatedLibrary> _libraries = [];
   Timer? _clockTimer;
   late final ValueNotifier<String> _currentTime;
@@ -214,7 +217,11 @@ class _TopToolbarState extends State<TopToolbar> with RouteAware {
           _previousFocusAvatarCallback;
     }
     _clockTimer?.cancel();
-    TopToolbar.isFocusedNotifier.value = false;
+    // Only clear the shared flag if this instance held focus, so a torn-down
+    // route's toolbar can't wipe the state of the one the user is on.
+    if (_toolbarHadFocus) {
+      TopToolbar.isFocusedNotifier.value = false;
+    }
     _avatarFocus.removeListener(_onAvatarFocusChanged);
     FocusManager.instance.removeListener(_trackPreviousFocus);
     _toolbarScopeNode.dispose();
@@ -566,6 +573,7 @@ class _TopToolbarState extends State<TopToolbar> with RouteAware {
           child: Focus(
             focusNode: _toolbarScopeNode,
             onFocusChange: (hasFocus) {
+              _toolbarHadFocus = hasFocus;
               TopToolbar.isFocusedNotifier.value = hasFocus;
             },
             onKeyEvent: (_, event) {

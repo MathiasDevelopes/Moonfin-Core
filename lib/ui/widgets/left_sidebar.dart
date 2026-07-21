@@ -92,7 +92,10 @@ class _LeftSidebarState extends State<LeftSidebar> with RouteAware {
   bool _librariesExpanded = false;
   bool _canExpandViaFocus = false;
   bool _skipExpandOnNextFocusFromNavigation = false;
-  bool get _sidebarHadFocus => LeftSidebar.isFocusedNotifier.value;
+  // Tracked per instance instead of reading the shared isFocusedNotifier,
+  // where a stale value from another route's sidebar would break focus-gain
+  // detection and leave focus stuck in a collapsed rail.
+  bool _sidebarHadFocus = false;
   Timer? _clockTimer;
   Timer? _labelTimer;
   Timer? _focusExpandGateTimer;
@@ -110,6 +113,11 @@ class _LeftSidebarState extends State<LeftSidebar> with RouteAware {
     _currentTime = ValueNotifier<String>('');
     _focusNavbarCallback = () {
       if (!mounted || _homeFocusNode.context == null) return;
+      // Expand the rail directly instead of relying on the focus listener,
+      // whose expansion can be blocked right after this sidebar mounts.
+      if (!_isMobile && !_isExpanded) {
+        _expand();
+      }
       _homeFocusNode.requestFocus();
     };
     _focusAvatarCallback = () {
@@ -221,7 +229,11 @@ class _LeftSidebarState extends State<LeftSidebar> with RouteAware {
     } catch (_) {}
     _prefs.removeListener(_onPrefsChanged);
     _currentTime.dispose();
-    LeftSidebar.isFocusedNotifier.value = false;
+    // Only clear the shared flag if this instance held focus, so a torn-down
+    // route's sidebar can't wipe the state of the one the user is on.
+    if (_sidebarHadFocus) {
+      LeftSidebar.isFocusedNotifier.value = false;
+    }
     super.dispose();
   }
 
@@ -353,12 +365,22 @@ class _LeftSidebarState extends State<LeftSidebar> with RouteAware {
         _focusHomeTimer?.cancel();
         _focusHomeTimer = Timer(Duration.zero, () {
           if (!mounted) return;
-          _homeFocusNode.requestFocus();
+          // Only jump to the home item when nothing specific was focused.
+          // A handoff can target a specific item like the avatar, and
+          // re-requesting home here would stomp it.
+          final primary = FocusManager.instance.primaryFocus;
+          final hasSpecificChild = primary != null &&
+              !identical(primary, _sidebarFocus) &&
+              _isDescendantOf(primary, _sidebarFocus);
+          if (!hasSpecificChild) {
+            _homeFocusNode.requestFocus();
+          }
         });
       }
     } else if (!hasFocus && _sidebarHadFocus && _canExpandViaFocus) {
       _collapse();
     }
+    _sidebarHadFocus = hasFocus;
     LeftSidebar.isFocusedNotifier.value = hasFocus;
   }
 
@@ -380,7 +402,13 @@ class _LeftSidebarState extends State<LeftSidebar> with RouteAware {
     setState(() => _canExpandViaFocus = false);
     _focusExpandGateTimer?.cancel();
     _focusExpandGateTimer = Timer(const Duration(milliseconds: 600), () {
-      if (mounted) setState(() => _canExpandViaFocus = true);
+      if (!mounted) return;
+      setState(() => _canExpandViaFocus = true);
+      // A focus handoff can land while the gate is closed, which leaves a
+      // focused item inside a collapsed rail. Heal that now.
+      if (_sidebarFocus.hasFocus && !_isExpanded) {
+        _expand();
+      }
     });
   }
 
